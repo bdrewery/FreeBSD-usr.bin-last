@@ -3,6 +3,8 @@
 
 PROG=	last
 LIBADD=	xo
+LDADD+=	-L/usr/local/lib -lGeoIP
+CFLAGS=	-I/usr/local/include
 
 NO_WFORMAT=
 
