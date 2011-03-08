@@ -61,6 +61,8 @@ __FBSDID("$FreeBSD: releng/11.3/usr.bin/last/last.c 338451 2018-09-04 09:53:45Z 
 
 #include <libxo/xo.h>
 
+#include <GeoIP.h>
+
 #define	NO	0				/* false/no */
 #define	YES	1				/* true/yes */
 #define	ATOI2(ar)	((ar)[0] - '0') * 10 + ((ar)[1] - '0'); (ar) += 2;
@@ -116,6 +118,10 @@ usage(void)
 "            [-n maxrec] [-t tty] [user ...]\n");
 	exit(1);
 }
+
+#define UT_HOSTSIZE 128
+#define W_DISPGEOSIZE 20
+const char* geoiplookup(const char*);
 
 int
 main(int argc, char *argv[])
@@ -336,6 +342,7 @@ printentry(struct utmpx *bp, struct idtab *tt)
 	struct tm *tm;
 	time_t	delta;				/* time difference */
 	time_t	t;
+	const char *country_name = NULL;
 
 	if (maxrec != -1 && !maxrec--)
 		exit(0);
@@ -361,6 +368,9 @@ printentry(struct utmpx *bp, struct idtab *tt)
 	case USER_PROCESS:
 		xo_emit("{:user/%-10s/%s} {:tty/%-8s/%s} {:from/%-22.22s/%s}",
 		    bp->ut_user, bp->ut_line, bp->ut_host);
+		country_name = geoiplookup(bp->ut_host);
+		xo_emit("{:country/%-*.*s/%@**@s} ",
+		    W_DISPGEOSIZE, W_DISPGEOSIZE, country_name ? country_name : "-");
 		break;
 	}
 	xo_attr("seconds", "%lu", (unsigned long)t);
@@ -578,4 +588,22 @@ dateconv(char *arg)
 terr:           xo_errx(1,
         "out of range or illegal time specification: [[CC]YY]MMDDhhmm[.SS]");
         return timet;
+}
+
+const char* geoiplookup(const char *name) {
+	const char *country_name = NULL;
+
+	int gip_type = strchr(name, ':') ? GEOIP_COUNTRY_EDITION_V6 : GEOIP_COUNTRY_EDITION;
+	if (GeoIP_db_avail(gip_type)) {
+		GeoIP *gip = GeoIP_open_type(gip_type, GEOIP_STANDARD);
+
+		if (gip) {
+			int country_id = gip_type == GEOIP_COUNTRY_EDITION ? GeoIP_id_by_name(gip, name) : GeoIP_id_by_name_v6(gip, name);
+			if (country_id > 0)
+				country_name = GeoIP_country_name[country_id];
+			GeoIP_delete(gip);
+		}
+	}
+
+	return country_name;
 }
