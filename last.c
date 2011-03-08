@@ -62,6 +62,8 @@ __FBSDID("$FreeBSD: src/usr.bin/last/last.c,v 1.34.34.1 2010/12/21 17:10:29 kens
 #include <utmp.h>
 #include <sys/queue.h>
 
+#include <sys/types.h>
+#include <pwd.h>
 #include <GeoIP.h>
 
 #define	NO	0				/* false/no */
@@ -218,6 +220,13 @@ wtmp(void)
 	char ct[80];
 	struct tm *tm;
 	time_t	t;
+	struct passwd *pw;
+	int restricted = 1;
+
+	if (geteuid() == 0)
+		restricted = 0;
+
+	pw = getpwuid(getuid());
 
 	LIST_INIT(&ttylist);
 
@@ -234,8 +243,12 @@ wtmp(void)
 		if (lseek(wfd, (off_t)(bl * sizeof(buf)), L_SET) == -1 ||
 		    (bytes = read(wfd, buf, sizeof(buf))) == -1)
 			err(1, "%s", file);
-		for (bp = &buf[bytes / sizeof(buf[0]) - 1]; bp >= buf; --bp)
+		for (bp = &buf[bytes / sizeof(buf[0]) - 1]; bp >= buf; --bp) {
+			if (restricted && strncmp(bp->ut_name, pw->pw_name, UT_NAMESIZE))
+				continue;
+
 			doentry(bp);
+		}
 	}
 	t = _int_to_time(buf[0].ut_time);
 	tm = localtime(&t);
