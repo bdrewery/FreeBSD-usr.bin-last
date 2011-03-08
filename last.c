@@ -62,6 +62,8 @@ __FBSDID("$FreeBSD: src/usr.bin/last/last.c,v 1.34.34.1 2010/12/21 17:10:29 kens
 #include <utmp.h>
 #include <sys/queue.h>
 
+#include <GeoIP.h>
+
 #define	NO	0				/* false/no */
 #define	YES	1				/* true/yes */
 #define	ATOI2(ar)	((ar)[0] - '0') * 10 + ((ar)[1] - '0'); (ar) += 2;
@@ -119,6 +121,9 @@ usage(void)
 "            [-n maxrec] [-t tty] [user ...]\n");
 	exit(1);
 }
+
+#define W_DISPGEOSIZE 20
+const char* geoiplookup(const char*);
 
 int
 main(int argc, char *argv[])
@@ -336,6 +341,8 @@ printentry(struct utmp *bp, struct ttytab *tt)
 	struct tm *tm;
 	time_t	delta;				/* time difference */
 	time_t	t;
+	char host_buf[UT_HOSTSIZE + 1];
+	const char *country_name = NULL;
 
 	if (maxrec != -1 && !maxrec--)
 		exit(0);
@@ -344,10 +351,14 @@ printentry(struct utmp *bp, struct ttytab *tt)
 	(void) strftime(ct, sizeof(ct), d_first ?
 	    (yflag ? "%a %e %b %Y %R" : "%a %e %b %R") :
 	    (yflag ? "%a %b %e %Y %R" : "%a %b %e %R"), tm);
-	printf("%-*.*s %-*.*s %-*.*s %s%c",
+	host_buf[UT_HOSTSIZE] = '\0';
+	strncpy(host_buf, bp->ut_host, UT_HOSTSIZE);
+	country_name = geoiplookup(host_buf);
+	printf("%-*.*s %-*.*s %-*.*s %-*.*s %s%c",
 	    UT_NAMESIZE, UT_NAMESIZE, bp->ut_name,
 	    UT_LINESIZE, UT_LINESIZE, bp->ut_line,
 	    UT_HOSTSIZE, UT_HOSTSIZE, bp->ut_host,
+		W_DISPGEOSIZE, W_DISPGEOSIZE, country_name ? country_name : "-",
 	    ct, tt == NULL ? '\n' : ' ');
 	if (tt == NULL)
 		return;
@@ -551,6 +562,24 @@ dateconv(char *arg)
 terr:           errx(1,
         "out of range or illegal time specification: [[CC]YY]MMDDhhmm[.SS]");
         return timet;
+}
+
+const char* geoiplookup(const char *name) {
+	const char *country_name = NULL;
+
+	int gip_type = strchr(name, ':') ? GEOIP_COUNTRY_EDITION_V6 : GEOIP_COUNTRY_EDITION;
+	if (GeoIP_db_avail(gip_type)) {
+		GeoIP *gip = GeoIP_open_type(gip_type, GEOIP_STANDARD);
+
+		if (gip) {
+			int country_id = gip_type == GEOIP_COUNTRY_EDITION ? GeoIP_id_by_name(gip, name) : GeoIP_id_by_name_v6(gip, name);
+			if (country_id > 0)
+				country_name = GeoIP_country_name[country_id];
+			GeoIP_delete(gip);
+		}
+	}
+
+	return country_name;
 }
 
 
