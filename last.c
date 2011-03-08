@@ -61,6 +61,8 @@ __FBSDID("$FreeBSD: releng/11.3/usr.bin/last/last.c 338451 2018-09-04 09:53:45Z 
 
 #include <libxo/xo.h>
 
+#include <sys/types.h>
+#include <pwd.h>
 #include <GeoIP.h>
 
 #define	NO	0				/* false/no */
@@ -222,6 +224,13 @@ wtmp(void)
 	time_t t;
 	char ct[80];
 	struct tm *tm;
+	struct passwd *pw;
+	int restricted = 1;
+
+	if (geteuid() == 0)
+		restricted = 0;
+
+	pw = getpwuid(getuid());
 
 	SLIST_INIT(&idlist);
 	(void)time(&t);
@@ -232,6 +241,9 @@ wtmp(void)
 	if (setutxdb(UTXDB_LOG, file) != 0)
 		xo_err(1, "%s", file);
 	while ((ut = getutxent()) != NULL) {
+		if (restricted && strncmp(ut->ut_user, pw->pw_name,
+		    sizeof(ut->ut_user)))
+			continue;
 		if (amount % 128 == 0) {
 			buf = realloc(buf, (amount + 128) * sizeof *ut);
 			if (buf == NULL)
