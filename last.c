@@ -241,8 +241,13 @@ wtmp(void)
 	if (setutxdb(UTXDB_LOG, file) != 0)
 		xo_err(1, "%s", file);
 	while ((ut = getutxent()) != NULL) {
-		if (restricted && strncmp(ut->ut_user, pw->pw_name,
-		    sizeof(ut->ut_user)))
+		/*
+		 * Allow user to see their own entries as well as 'reboot' and
+		 * 'shutdown'.
+		 */
+		if ((restricted && strncmp(ut->ut_user, pw->pw_name,
+		    sizeof(ut->ut_user))) &&
+		    !(ut->ut_type == BOOT_TIME || ut->ut_type == SHUTDOWN_TIME))
 			continue;
 		if (amount % 128 == 0) {
 			buf = realloc(buf, (amount + 128) * sizeof *ut);
