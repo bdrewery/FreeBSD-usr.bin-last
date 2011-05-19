@@ -244,7 +244,11 @@ wtmp(void)
 		    (bytes = read(wfd, buf, sizeof(buf))) == -1)
 			err(1, "%s", file);
 		for (bp = &buf[bytes / sizeof(buf[0]) - 1]; bp >= buf; --bp) {
-			if (restricted && strncmp(bp->ut_name, pw->pw_name, UT_NAMESIZE))
+			/* Allow user to see their own entries as well as 'reboot' and 'shutdown' */
+			if (restricted &&
+					strncmp(bp->ut_name, pw->pw_name, UT_NAMESIZE) &&
+					strncmp(bp->ut_name, "reboot", UT_NAMESIZE) &&
+					strncmp(bp->ut_name, "shutdown", UT_NAMESIZE))
 				continue;
 
 			doentry(bp);
