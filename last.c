@@ -371,16 +371,16 @@ printentry(struct utmpx *bp, struct idtab *tt)
 	    (yflag ? "%a %b %e %Y %R" : "%a %b %e %R"), tm);
 	switch (bp->ut_type) {
 	case BOOT_TIME:
-		xo_emit("{:user/%-42s/%s}", "boot time");
+		xo_emit("{:user/%-*s/%@*@s}", 42+W_DISPGEOSIZE+1, "boot time");
 		break;
 	case SHUTDOWN_TIME:
-		xo_emit("{:user/%-42s/%s}", "shutdown time");
+		xo_emit("{:user/%-*s/%@*@s}", 42+W_DISPGEOSIZE+1, "shutdown time");
 		break;
 	case OLD_TIME:
-		xo_emit("{:user/%-42s/%s}", "old time");
+		xo_emit("{:user/%-*s/%@*@s}", 42+W_DISPGEOSIZE+1, "old time");
 		break;
 	case NEW_TIME:
-		xo_emit("{:user/%-42s/%s}", "new time");
+		xo_emit("{:user/%-*s/%@*@s}", 42+W_DISPGEOSIZE+1, "new time");
 		break;
 	case USER_PROCESS:
 		xo_emit("{:user/%-10s/%s} {:tty/%-8s/%s} {:from/%-22.22s/%s}",
