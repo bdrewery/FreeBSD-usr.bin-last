@@ -1,4 +1,6 @@
 /*
+ * SPDX-License-Identifier: BSD-3-Clause
+ *
  * Copyright (c) 1987, 1993, 1994
  *	The Regents of the University of California.  All rights reserved.
  * Copyright (c) 2018 Philip Paeps
@@ -11,7 +13,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -38,11 +40,14 @@ static const char copyright[] =
 static const char sccsid[] = "@(#)last.c	8.2 (Berkeley) 4/2/94";
 #endif /* not lint */
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/11.3/usr.bin/last/last.c 338451 2018-09-04 09:53:45Z philip $");
+__FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
+#include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <capsicum_helpers.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -57,7 +62,6 @@ __FBSDID("$FreeBSD: releng/11.3/usr.bin/last/last.c 338451 2018-09-04 09:53:45Z 
 #include <timeconv.h>
 #include <unistd.h>
 #include <utmpx.h>
-#include <sys/queue.h>
 
 #include <libxo/xo.h>
 
@@ -92,6 +96,7 @@ static const	char *crmsg;			/* cause of last reboot */
 static time_t	currentout;			/* current logout value */
 static long	maxrec;				/* records to display */
 static const	char *file = NULL;		/* utx.log file */
+static int	noctfix = 0;			/* locale is C or UTF-8 */
 static int	sflag = 0;			/* show delta in seconds */
 static int	width = 5;			/* show seconds in delta */
 static int	yflag;				/* show year */
@@ -103,6 +108,7 @@ static time_t	snaptime;			/* if != 0, we will only
 						 */
 
 static void	 addarg(int, char *);
+static const char *ctf(const char *);
 static time_t	 dateconv(char *);
 static void	 doentry(struct utmpx *);
 static void	 hostconv(char *);
@@ -111,6 +117,31 @@ static char	*ttyconv(char *);
 static int	 want(struct utmpx *);
 static void	 usage(void);
 static void	 wtmp(void);
+
+static const char*
+ctf(const char *fmt) {
+	static char  buf[31];
+	const char  *src, *end;
+	char	    *dst;
+
+	if (noctfix)
+		return (fmt);
+
+	end = buf + sizeof(buf);
+	for (src = fmt, dst = buf; dst < end; *dst++ = *src++) {
+		if (*src == '\0') {
+			*dst = '\0';
+			break;
+		} else if (*src == '%' && *(src+1) == 's') {
+			*dst++ = '%';
+			*dst++ = 'h';
+			*dst++ = 's';
+			strlcpy(dst, src+2, end - dst);
+			return (buf);
+		}
+	}
+	return (buf);
+}
 
 static void
 usage(void)
@@ -133,6 +164,11 @@ main(int argc, char *argv[])
 
 	(void) setlocale(LC_TIME, "");
 	d_first = (*nl_langinfo(D_MD_ORDER) == 'd');
+
+	(void) setlocale(LC_CTYPE, "");
+	p = nl_langinfo(CODESET);
+	if (strcmp(p, "UTF-8") == 0 || strcmp(p, "US-ASCII") == 0)
+		noctfix = 1;
 
 	argc = xo_parse_args(argc, argv);
 	if (argc < 0)
@@ -192,6 +228,19 @@ main(int argc, char *argv[])
 			usage();
 		}
 
+	if (caph_limit_stdio() < 0)
+		xo_err(1, "can't limit stdio rights");
+
+	caph_cache_catpages();
+	caph_cache_tzdata();
+
+	/* Cache UTX database. */
+	if (setutxdb(UTXDB_LOG, file) != 0)
+		xo_err(1, "%s", file != NULL ? file : "(default utx db)");
+
+	if (caph_enter() < 0)
+		xo_err(1, "cap_enter");
+
 	if (sflag && width == 8) usage();
 
 	if (argc) {
@@ -238,8 +287,6 @@ wtmp(void)
 	xo_open_container("last-information");
 
 	/* Load the last entries from the file. */
-	if (setutxdb(UTXDB_LOG, file) != 0)
-		xo_err(1, "%s", file);
 	while ((ut = getutxent()) != NULL) {
 		/*
 		 * Allow user to see their own entries as well as 'reboot' and
@@ -270,7 +317,7 @@ wtmp(void)
 	(void) strftime(ct, sizeof(ct), "%+", tm);
 	xo_emit("\n{:utxdb/%s}", (file == NULL) ? "utx.log" : file);
 	xo_attr("seconds", "%lu", (unsigned long) t);
-	xo_emit(" begins {:begins/%s}\n", ct);
+	xo_emit(ctf(" begins {:begins/%s}\n"), ct);
 	xo_close_container("last-information");
 }
 
@@ -391,7 +438,7 @@ printentry(struct utmpx *bp, struct idtab *tt)
 		break;
 	}
 	xo_attr("seconds", "%lu", (unsigned long)t);
-	xo_emit(" {:login-time/%s%c/%s}", ct, tt == NULL ? '\n' : ' ');
+	xo_emit(ctf(" {:login-time/%s%c/%s}"), ct, tt == NULL ? '\n' : ' ');
 	if (tt == NULL)
 		goto end;
 	if (!tt->logout) {
@@ -405,7 +452,7 @@ printentry(struct utmpx *bp, struct idtab *tt)
 		tm = localtime(&tt->logout);
 		(void) strftime(ct, sizeof(ct), "%R", tm);
 		xo_attr("seconds", "%lu", (unsigned long)tt->logout);
-		xo_emit("- {:logout-time/%s}", ct);
+		xo_emit(ctf("- {:logout-time/%s}"), ct);
 	}
 	delta = tt->logout - bp->ut_tv.tv_sec;
 	xo_attr("seconds", "%ld", (long)delta);
@@ -415,9 +462,9 @@ printentry(struct utmpx *bp, struct idtab *tt)
 		tm = gmtime(&delta);
 		(void) strftime(ct, sizeof(ct), width >= 8 ? "%T" : "%R", tm);
 		if (delta < 86400)
-			xo_emit("  ({:session-length/%s})\n", ct);
+			xo_emit(ctf("  ({:session-length/%s})\n"), ct);
 		else
-			xo_emit(" ({:session-length/%ld+%s})\n",
+			xo_emit(ctf(" ({:session-length/%ld+%s})\n"),
 			    (long)delta / 86400, ct);
 	}
 
