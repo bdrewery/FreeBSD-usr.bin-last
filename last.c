@@ -152,7 +152,6 @@ usage(void)
 	exit(1);
 }
 
-#define UT_HOSTSIZE 128
 #define W_DISPGEOSIZE 20
 const char* geoiplookup(const char*);
 
