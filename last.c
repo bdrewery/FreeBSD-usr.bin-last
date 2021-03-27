@@ -47,6 +47,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include <sys/nv.h>
+#include <libcasper.h>
+#ifndef WITH_CASPER
+#error No Casper?
+#endif
+#include <casper/cap_pwd.h>
+#include <casper/cap_grp.h>
+
 #include <capsicum_helpers.h>
 #include <err.h>
 #include <errno.h>
@@ -118,6 +126,53 @@ static int	 want(struct utmpx *);
 static void	 usage(void);
 static void	 wtmp(void);
 
+/* Copied from kdump.c */
+#ifdef WITH_CASPER
+static cap_channel_t *cappwd, *capgrp;
+
+static int
+cappwdgrp_setup(cap_channel_t **cappwdp, cap_channel_t **capgrpp)
+{
+	cap_channel_t *capcas, *cappwdloc, *capgrploc;
+	const char *cmds[1], *fields[1];
+
+	capcas = cap_init();
+	if (capcas == NULL) {
+		err(1, "unable to create casper process");
+		exit(1);
+	}
+	cappwdloc = cap_service_open(capcas, "system.pwd");
+	capgrploc = cap_service_open(capcas, "system.grp");
+	/* Casper capability no longer needed. */
+	cap_close(capcas);
+	if (cappwdloc == NULL || capgrploc == NULL) {
+		if (cappwdloc == NULL)
+			warn("unable to open system.pwd service");
+		if (capgrploc == NULL)
+			warn("unable to open system.grp service");
+		exit(1);
+	}
+	/* Limit system.pwd to only getpwuid() function and pw_name field. */
+	cmds[0] = "getpwuid";
+	if (cap_pwd_limit_cmds(cappwdloc, cmds, 1) < 0)
+		err(1, "unable to limit system.pwd service");
+	fields[0] = "pw_name";
+	if (cap_pwd_limit_fields(cappwdloc, fields, 1) < 0)
+		err(1, "unable to limit system.pwd service");
+	/* Limit system.grp to only getgrgid() function and gr_name field. */
+	cmds[0] = "getgrgid";
+	if (cap_grp_limit_cmds(capgrploc, cmds, 1) < 0)
+		err(1, "unable to limit system.grp service");
+	fields[0] = "gr_name";
+	if (cap_grp_limit_fields(capgrploc, fields, 1) < 0)
+		err(1, "unable to limit system.grp service");
+
+	*cappwdp = cappwdloc;
+	*capgrpp = capgrploc;
+	return (0);
+}
+#endif	/* WITH_CASPER */
+
 static const char*
 ctf(const char *fmt) {
 	static char  buf[31];
@@ -153,7 +208,10 @@ usage(void)
 }
 
 #define W_DISPGEOSIZE 20
-const char* geoiplookup(const char*);
+static const char* geoiplookup(const char*);
+static void geoip_load_db(GeoIPDBTypes type);
+/* GeoIPDBTypes maxes around 38. */
+static GeoIP *gips[GEOIP_COUNTRY_EDITION_V6+1];
 
 int
 main(int argc, char *argv[])
@@ -237,6 +295,14 @@ main(int argc, char *argv[])
 	if (setutxdb(UTXDB_LOG, file) != 0)
 		xo_err(1, "%s", file != NULL ? file : "(default utx db)");
 
+#ifdef WITH_CASPER
+	if (cappwdgrp_setup(&cappwd, &capgrp) < 0)
+		err(1, "cappwdgrp_setup");
+#endif
+	/* Open GeoIP Database */
+	geoip_load_db(GEOIP_COUNTRY_EDITION_V6);
+	geoip_load_db(GEOIP_COUNTRY_EDITION);
+
 	if (caph_enter() < 0)
 		xo_err(1, "cap_enter");
 
@@ -278,7 +344,7 @@ wtmp(void)
 	if (geteuid() == 0)
 		restricted = 0;
 
-	pw = getpwuid(getuid());
+	pw = cap_getpwuid(cappwd, getuid());
 
 	SLIST_INIT(&idlist);
 	(void)time(&t);
@@ -653,19 +719,27 @@ terr:           xo_errx(1,
         return timet;
 }
 
-const char* geoiplookup(const char *name) {
+static void
+geoip_load_db(GeoIPDBTypes gip_type)
+{
+	if (GeoIP_db_avail(gip_type)) {
+		if (gip_type > nitems(gips))
+			err(1, "gip_type %d larger than gips %d",
+			    gip_type, nitems(gips));
+		gips[gip_type] = GeoIP_open_type(gip_type, GEOIP_STANDARD);
+	}
+}
+
+static const char* geoiplookup(const char *name) {
 	const char *country_name = NULL;
 
 	int gip_type = strchr(name, ':') ? GEOIP_COUNTRY_EDITION_V6 : GEOIP_COUNTRY_EDITION;
-	if (GeoIP_db_avail(gip_type)) {
-		GeoIP *gip = GeoIP_open_type(gip_type, GEOIP_STANDARD);
+	if (gips[gip_type] != NULL) {
+		GeoIP *gip = gips[gip_type];
 
-		if (gip) {
-			int country_id = gip_type == GEOIP_COUNTRY_EDITION ? GeoIP_id_by_name(gip, name) : GeoIP_id_by_name_v6(gip, name);
-			if (country_id > 0)
-				country_name = GeoIP_country_name[country_id];
-			GeoIP_delete(gip);
-		}
+		int country_id = gip_type == GEOIP_COUNTRY_EDITION ? GeoIP_id_by_name(gip, name) : GeoIP_id_by_name_v6(gip, name);
+		if (country_id > 0)
+			country_name = GeoIP_country_name[country_id];
 	}
 
 	return country_name;

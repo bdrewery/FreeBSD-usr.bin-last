@@ -3,8 +3,12 @@
 
 PROG=	last
 LIBADD=	xo
+LDADD+= -lcasper
+LDADD+= -lcap_pwd
+LDADD+= -lcap_grp
+CFLAGS+= -DHAVE_CASPER
 LDADD+=	-L/usr/local/lib -lGeoIP
-CFLAGS=	-I/usr/local/include
+CFLAGS+=-I/usr/local/include
 
 NO_WFORMAT=
 
